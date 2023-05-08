@@ -1,0 +1,39 @@
+-- загрузка библиотеки компонентов OpenComputers
+local component = require("component")
+
+-- загрузка библиотеки файловой системы OpenComputers
+local filesystem = require("filesystem")
+
+-- определение функции загрузки операционной системы
+local function loadOS()
+  local handle, err = filesystem.open("/boot/mineos.lua", "r")
+  if not handle then
+    io.stderr:write("Failed to load MineOS: " .. err .. "\n")
+    return
+  end
+  local buffer = ""
+  repeat
+    local data, err = handle:read(1024)
+    if not data and err then
+      io.stderr:write("Failed to read MineOS: " .. err .. "\n")
+      handle:close()
+      return
+    end
+    buffer = buffer .. (data or "")
+  until not data
+  handle:close()
+  local mineos, err = load(buffer, "=mineos", "t", _G)
+  if not mineos then
+    io.stderr:write("Failed to load MineOS: " .. err .. "\n")
+    return
+  end
+  mineos()
+end
+
+-- основной цикл биоса
+while true do
+  local _, _, key = component.pullSignal()
+  if key == 28 then
+    loadOS()
+  end
+end
