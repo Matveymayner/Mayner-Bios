@@ -1,39 +1,73 @@
--- загрузка библиотеки компонентов OpenComputers
+-- BIOS для OpenComputers --
 local component = require("component")
+local computer = require("computer")
+local fs = require("filesystem")
 
--- загрузка библиотеки файловой системы OpenComputers
-local filesystem = require("filesystem")
-
--- определение функции загрузки операционной системы
-local function loadOS()
-  local handle, err = filesystem.open("/boot/mineos.lua", "r")
-  if not handle then
-    io.stderr:write("Failed to load MineOS: " .. err .. "\n")
-    return
-  end
-  local buffer = ""
-  repeat
-    local data, err = handle:read(1024)
-    if not data and err then
-      io.stderr:write("Failed to read MineOS: " .. err .. "\n")
-      handle:close()
-      return
-    end
-    buffer = buffer .. (data or "")
-  until not data
-  handle:close()
-  local mineos, err = load(buffer, "=mineos", "t", _G)
-  if not mineos then
-    io.stderr:write("Failed to load MineOS: " .. err .. "\n")
-    return
-  end
-  mineos()
+-- Проверка наличия необходимых компонентов
+if not component.isAvailable("gpu") or not component.isAvailable("filesystem") then
+error("Требуется установленный графический процессор (GPU) и файловая система")
 end
 
--- основной цикл биоса
+-- Подключение к компонентам
+local gpu = component.gpu
+local screen = component.screen
+local filesystem = component.filesystem
+
+-- Определение размеров экрана
+local screenWidth, screenHeight = gpu.getResolution()
+
+-- Цветовые константы
+local colors = {
+background = 0x000000, -- Черный
+foreground = 0xFFFFFF, -- Белый
+}
+
+-- Функция очистки экрана
+local function clearScreen()
+gpu.setBackground(colors.background)
+gpu.setForeground(colors.foreground)
+gpu.fill(1, 1, screenWidth, screenHeight, " ")
+end
+
+-- Загрузка MineOS
+local function loadMineOS()
+clearScreen()
+gpu.setResolution(80, 25) -- Разрешение экрана для MineOS
+
+-- Проверка наличия MineOS
+local mineOSPath = "/OS.lua"
+if not filesystem.exists(mineOSPath) then
+error("MineOS не найдена")
+end
+
+-- Загрузка MineOS
+local mineOS, error = loadfile(mineOSPath)
+if not mineOS then
+error("Не удалось загрузить MineOS: " .. error)
+end
+
+-- Запуск MineOS
+local success, error = pcall(mineOS)
+if not success then
+error("Ошибка при запуске MineOS: " .. error)
+end
+end
+
+-- Основной цикл BIOS
 while true do
-  local _, _, key = component.pullSignal()
-  if key == 28 then
-    loadOS()
-  end
+clearScreen()
+gpu.setResolution(screenWidth, screenHeight)
+
+-- Вывод информации о BIOS
+gpu.set(1, 1, "BIOS для OpenComputers")
+gpu.set(1, 3, "Нажмите Enter для загрузки MineOS")
+
+-- Ожидание нажатия клавиши
+while true do
+local event, _, _, key = computer.pullSignal()
+if event == "key_down" and key == 28 then -- Клавиша Enter
+loadMineOS()
+break
+end
+end
 end
