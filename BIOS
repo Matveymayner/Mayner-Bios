@@ -1,73 +1,142 @@
--- BIOS для OpenComputers --
-local component = require("component")
-local computer = require("computer")
-local fs = require("filesystem")
-
--- Проверка наличия необходимых компонентов
-if not component.isAvailable("gpu") or not component.isAvailable("filesystem") then
-error("Требуется установленный графический процессор (GPU) и файловая система")
+local component_invoke = component.invoke
+function boot_invoke(address, method, ...)
+  local result = table.pack(pcall(component_invoke, address, method, ...))
+  if not result[1] then
+    return nil, result[2]
+  else
+    return table.unpack(result, 2, result.n)
+  end
 end
 
--- Подключение к компонентам
-local gpu = component.gpu
-local screen = component.screen
-local filesystem = component.filesystem
-
--- Определение размеров экрана
-local screenWidth, screenHeight = gpu.getResolution()
-
--- Цветовые константы
-local colors = {
-background = 0x000000, -- Черный
-foreground = 0xFFFFFF, -- Белый
-}
-
--- Функция очистки экрана
-local function clearScreen()
-gpu.setBackground(colors.background)
-gpu.setForeground(colors.foreground)
-gpu.fill(1, 1, screenWidth, screenHeight, " ")
+local screen = component.list("screen")()
+local gpu = component.list("gpu")()
+if gpu == nil then
+computer.beep(1000,0.5)
+computer.beep(1000,0.2)
+error("GPU is not avaliable!")
 end
-
--- Загрузка MineOS
-local function loadMineOS()
-clearScreen()
-gpu.setResolution(80, 25) -- Разрешение экрана для MineOS
-
--- Проверка наличия MineOS
-local mineOSPath = "/OS.lua"
-if not filesystem.exists(mineOSPath) then
-error("MineOS не найдена")
+if gpu and screen then
+  boot_invoke(gpu, "bind", screen)
 end
-
--- Загрузка MineOS
-local mineOS, error = loadfile(mineOSPath)
-if not mineOS then
-error("Не удалось загрузить MineOS: " .. error)
+local w, h = boot_invoke(gpu, "getResolution")
+local function b(a,ab)
+computer.beep(a,ab)
 end
-
--- Запуск MineOS
-local success, error = pcall(mineOS)
-if not success then
-error("Ошибка при запуске MineOS: " .. error)
+local function sleep(timeout)
+  local i = computer.uptime()
+local o = computer.uptime()
+while i < o+timeout do
+ i = computer.uptime()
 end
 end
-
--- Основной цикл BIOS
-while true do
-clearScreen()
-gpu.setResolution(screenWidth, screenHeight)
-
--- Вывод информации о BIOS
-gpu.set(1, 1, "BIOS для OpenComputers")
-gpu.set(1, 3, "Нажмите Enter для загрузки MineOS")
-
--- Ожидание нажатия клавиши
-while true do
-local event, _, _, key = computer.pullSignal()
-if event == "key_down" and key == 28 then -- Клавиша Enter
-loadMineOS()
-break
+local writeCache = 1
+local function status(text)
+boot_invoke(gpu,"set",1,writeCache,text)
+if writeCache == h then
+writeCache = 0
 end
+writeCache = writeCache + 1
 end
+sleep(0.2)
+
+local keyboard = component.list("keyboard")()
+if keyboard == nil then
+computer.beep(1000,0.5)
+computer.beep(1000,0.5)
+computer.beep(1000,0.1)
+error("Keyboard is not avaliable!")
 end
+local function centerText(y, text, color)
+      local lenght = unicode.len(text)
+      local x = math.floor(w / 2 - lenght / 2)
+      local oldcolors = boot_invoke(gpu,"getForeground")
+      boot_invoke(gpu, "setForeground", color)
+      boot_invoke(gpu, "set", x, y, text)
+      boot_invoke(gpu, "setForeground", oldcolors)
+  end
+
+
+
+local function setBackground(color)
+  boot_invoke(gpu,"setBackground",color)
+end
+local function setForeground(color)
+  boot_invoke(gpu,"setForeground",color)
+end
+
+if boot_invoke(gpu,"maxDepth") < 8 then
+setBackground(0x000000)
+setForeground(0xFFFFFF)
+else
+setBackground(0xDDDDDD)
+setForeground(0x999999)
+end
+component.invoke(gpu,"fill",1,1,w,h," ")
+status("Initializion components")
+status("GPU and keyboard is avaliable")
+status("Loading boot screen")
+centerText(h/2-1,"MAYNER BIOS")
+local str = "Made by MatveyMayner"
+boot_invoke(gpu,"set",w-unicode.len(str),h,str)
+
+
+local eeprom = component.list("eeprom")()
+computer.getBootAddress = function()
+  return boot_invoke(eeprom, "getData")
+end
+computer.setBootAddress = function(address)
+  return boot_invoke(eeprom, "setData", address)
+end
+local function tryLoadFrom(address)
+  local handle, reason = boot_invoke(address, "open", "/init.lua")
+  if not handle then
+    return nil, reason
+  end
+  local buffer = ""
+  repeat
+    local data, reason = boot_invoke(address, "read", handle, math.huge)
+    if not data and reason then
+      return nil, reason
+    end
+    buffer = buffer .. (data or "")
+  until not data
+  boot_invoke(address, "close", handle)
+  return load(buffer, "=init")
+end
+
+local init, reason
+if computer.getBootAddress() then
+  init, reason = tryLoadFrom(computer.getBootAddress())
+end
+if not init then
+  status("Find bootable filesystems")
+  computer.setBootAddress()
+  for address in component.list("filesystem") do
+    status("Check " .. address)
+    init, reason = tryLoadFrom(address)
+    if not init == nil then
+    status(init .. ":" .. reason)
+  else
+    status(reason)
+  end
+    if init then
+      status("Set boot address to " .. address)
+      computer.setBootAddress(address)
+      break
+    end
+  end
+end
+if not init then
+  status("Error: no bootable medium found" .. (reason and (": " .. tostring(reason)) or ""), 0)
+  b(1000,0.8)
+  local f = 1
+  while f < 7 do
+  f = f + 1
+  b(1000,0.2)
+  end
+  computer.shutdown(true)
+end
+computer.beep(1000,0.2)
+status("Booting filesystem " .. computer.getBootAddress())
+sleep(0.8)
+init()
